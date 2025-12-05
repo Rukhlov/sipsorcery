@@ -35,12 +35,13 @@ namespace SIPSorcery.Net
         private H264Depacketiser _h264Depacketiser;
         private H265Depacketiser _h265Depacketiser;
         private MJPEGDepacketiser _mJPEGDepacketiser;
+        private AV1Depacketiser _av1Depacketiser;
 
         public RtpVideoFramer(VideoCodecsEnum codec, int maxFrameSize)
         {
-            if (!(codec == VideoCodecsEnum.VP8 || codec == VideoCodecsEnum.H264 || codec == VideoCodecsEnum.H265 || codec == VideoCodecsEnum.JPEG))
+            if (!(codec == VideoCodecsEnum.VP8 || codec == VideoCodecsEnum.H264 || codec == VideoCodecsEnum.H265 || codec == VideoCodecsEnum.JPEG || codec == VideoCodecsEnum.AV1))
             {
-                throw new NotSupportedException("The RTP video framer currently only understands H264, VP8 and JPEG encoded frames.");
+                throw new NotSupportedException("The RTP video framer currently only understands H264, H265, VP8, JPEG and AV1 encoded frames.");
             }
 
             _codec = codec;
@@ -58,6 +59,10 @@ namespace SIPSorcery.Net
             else if(_codec == VideoCodecsEnum.H265)
             {
                 _h265Depacketiser = new H265Depacketiser();
+            }
+            else if(_codec == VideoCodecsEnum.AV1)
+            {
+                _av1Depacketiser = new AV1Depacketiser();
             }
         }
 
@@ -123,6 +128,14 @@ namespace SIPSorcery.Net
             else if(_codec == VideoCodecsEnum.JPEG)
             {
                 var frameStream = _mJPEGDepacketiser.ProcessRTPPayload(payload, hdr.SequenceNumber, hdr.Timestamp, hdr.MarkerBit, out bool isKeyFrame);
+                if (frameStream != null)
+                {
+                    return frameStream.ToArray();
+                }
+            }
+            else if(_codec == VideoCodecsEnum.AV1)
+            {
+                var frameStream = _av1Depacketiser.ProcessRTPPayload(payload, hdr.SequenceNumber, hdr.Timestamp, hdr.MarkerBit, out bool isKeyFrame);
                 if (frameStream != null)
                 {
                     return frameStream.ToArray();

@@ -230,6 +230,68 @@ namespace SIPSorcery.Net
         }
 
         /// <summary>
+        /// Sends an AV1 frame to the remote party.
+        /// </summary>
+        /// <param name="durationRtpUnits">The duration in timestamp units of the payload (e.g. 3000 for 30fps at 90kHz).</param>
+        /// <param name="payloadID">The payload type ID being used for AV1 and that will be set on the RTP header.</param>
+        /// <param name="sample">The encoded AV1 bitstream containing OBUs.</param>
+        /// <param name="isKeyFrame">True if this is a key frame (contains sequence header).</param>
+        public void SendAV1Frame(uint durationRtpUnits, int payloadID, byte[] sample, bool isKeyFrame = false)
+        {
+            if (CheckIfCanSendRtpRaw())
+            {
+                try
+                {
+                    // Parse OBUs from the AV1 bitstream
+                    var obus = AV1Packetiser.ParseObus(sample);
+
+                    // Check if this is a key frame based on OBU types
+                    bool hasSequenceHeader = false;
+                    var obuList = new List<AV1Packetiser.AV1Obu>(obus);
+                    foreach (var obu in obuList)
+                    {
+                        if (AV1Packetiser.IsKeyFrameObu(obu))
+                        {
+                            hasSequenceHeader = true;
+                            break;
+                        }
+                    }
+
+                    bool isNewCodedVideoSequence = isKeyFrame || hasSequenceHeader;
+
+                    // Packetize and send
+                    var rtpPayloads = AV1Packetiser.Packetize(obuList, RTPSession.RTP_MAX_PAYLOAD, isNewCodedVideoSequence);
+                    
+                    byte[] lastPayload = null;
+
+                    foreach (var payload in rtpPayloads)
+                    {
+                        if (lastPayload != null)
+                        {
+                            // Send previous payload with marker = 0
+                            SetRtpHeaderExtensionValue(TransportWideCCExtension.RTP_HEADER_EXTENSION_URI, null);
+                            SendRtpRaw(lastPayload, LocalTrack.Timestamp, 0, payloadID, true);
+                        }
+                        lastPayload = payload;
+                    }
+
+                    // Send last payload with marker = 1
+                    if (lastPayload != null)
+                    {
+                        SetRtpHeaderExtensionValue(TransportWideCCExtension.RTP_HEADER_EXTENSION_URI, null);
+                        SendRtpRaw(lastPayload, LocalTrack.Timestamp, 1, payloadID, true);
+                    }
+
+                    LocalTrack.Timestamp += durationRtpUnits;
+                }
+                catch (SocketException sockExcp)
+                {
+                    logger.LogError(sockExcp, "SocketException SendAV1Frame. {ErrorMessage}", sockExcp.Message);
+                }
+            }
+        }
+
+        /// <summary>
         /// Sends a VP8 frame as one or more RTP packets.
         /// </summary>
         /// <param name="duration"> The duration in timestamp units of the payload. Needs
@@ -328,6 +390,12 @@ namespace SIPSorcery.Net
 
             int payloadID = sendingFormat.FormatID;
 
+            //if(sendingFormat.FormatName == "AV1")
+            //{
+            //    SendAV1Frame(durationRtpUnits, payloadID, sample);
+            //    return;
+            //}
+
             switch (sendingFormat.Codec)
             {
                 case VideoCodecsEnum.VP8:
@@ -341,6 +409,9 @@ namespace SIPSorcery.Net
                     break;
                 case VideoCodecsEnum.JPEG:
                     SendMJPEGFrame(durationRtpUnits, payloadID, sample);
+                    break;
+                case VideoCodecsEnum.AV1:
+                    SendAV1Frame(durationRtpUnits, payloadID, sample);
                     break;
                 default:
                     throw new ApplicationException($"Unsupported video format selected {sendingFormat.FormatName}.");
@@ -373,7 +444,8 @@ namespace SIPSorcery.Net
                 if (format.ToVideoFormat().Codec == VideoCodecsEnum.VP8 ||
                     format.ToVideoFormat().Codec == VideoCodecsEnum.H264 ||
                     format.ToVideoFormat().Codec == VideoCodecsEnum.H265 ||
-                    format.ToVideoFormat().Codec == VideoCodecsEnum.JPEG)
+                    format.ToVideoFormat().Codec == VideoCodecsEnum.JPEG ||
+                    format.ToVideoFormat().Codec == VideoCodecsEnum.AV1)
                 {
                     logger.LogDebug("Video depacketisation codec set to {Codec} for SSRC {SSRC}.", format.ToVideoFormat().Codec, packet.Header.SyncSource);
 
